@@ -71,7 +71,10 @@ type Http struct {
 
 func (h *Http) Class() string { return "request" }
 
-// Recovery handler to wrap the stdlib net/http Mux.
+// Recovery handler to wrap the stdlib net/http Mux. This function will detect a
+// panic, report it, and recover from the panic, preventing it from continuing
+// further.
+//
 // Example:
 //	http.HandleFunc("/", raven.RecoveryHandler(func(w http.ResponseWriter, r *http.Request) {
 //		...
@@ -104,4 +107,28 @@ func Recoverer(handler http.Handler) http.Handler {
 
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// Report handler to wrap the stdlib net/http Mux. This function will detect a
+// panic, report it, and allow the panic to continue.
+//
+// Example:
+//	http.HandleFunc("/", raven.ReportHandler(func(w http.ResponseWriter, r *http.Request) {
+//		...
+//	}))
+func ReportHandler(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rval := recover(); rval != nil {
+				debug.PrintStack()
+				rvalStr := fmt.Sprint(rval)
+				packet := NewPacket(rvalStr, NewException(errors.New(rvalStr), GetOrNewStacktrace(rval.(error), 2, 3, nil)), NewHttp(r))
+				Capture(packet, nil)
+				w.WriteHeader(http.StatusInternalServerError)
+				panic(rval)
+			}
+		}()
+
+		handler(w, r)
+	}
 }
